@@ -38,12 +38,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/koktu0/rjsf-form-builder.git"
+    "url": "https://github.com/kokotu0/rjsf-form-builder.git"
   },
   "bugs": {
-    "url": "https://github.com/koktu0/rjsf-form-builder/issues"
+    "url": "https://github.com/kokotu0/rjsf-form-builder/issues"
   },
-  "homepage": "https://github.com/koktu0/rjsf-form-builder#readme",
+  "homepage": "https://github.com/kokotu0/rjsf-form-builder#readme",
   "peerDependencies": {
     "react": "^18.0.0 || ^19.0.0",
     "react-dom": "^18.0.0 || ^19.0.0",
