@@ -6,3 +6,6 @@ dist
 
 # npm pack 산출물
 *.tgz
+
+# 시험장 빌드 산출물
+playground/out
