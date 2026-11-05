@@ -176,7 +176,7 @@ export const FieldEditor = ({
               value={kind}
               onChange={(e) => onKind(field.id, e.target.value as FieldKind)}
               disabled={locked}
-              helperText={locked ? "저장한 항목은 종류를 바꿀 수 없습니다." : undefined}
+              helperText={locked ? "저장한 뒤에는 바꿀 수 없습니다." : undefined}
               sx={{ flex: 1, minWidth: 140 }}
             >
               {(kinds.includes(kind) ? kinds : [kind, ...kinds]).map((k) => (
