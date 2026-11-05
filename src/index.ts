@@ -1,37 +1,57 @@
-// 메인 컴포넌트
+// 편집기
 export { FormBuilder } from "./FormBulider"
-
-// 훅
 export { useFormBuilder } from "./useFormBuilder"
+export { SectionEditor, FieldEditor, RulesEditor, DEFAULT_RULE_MESSAGE, DEFAULT_ICONS } from "./components"
 
-// 상수
-export { FIELD_TYPE_OPTIONS } from "./constants"
+// 그리기
+export { FormView, ObjectFieldTemplate, SubmitButton, customTemplates, customWidgets, PhoneNumberWidget, UpDownWidget } from "./components"
+export type { FormViewHandle, FormViewProps, FormValues } from "./components"
+export { koreanErrors, transformErrors, ERROR_MESSAGES } from "./errors"
 
-// 에디터 컴포넌트 (커스터마이즈용)
-export { SectionEditor, FieldEditor } from "./components"
+// 정의 → 스키마 (React 없이 쓰려면 "@kokotu0/rjsf-form-builder/compile")
+export {
+  compileDefinition,
+  fieldJsonSchema,
+  fieldUiSchema,
+  ruleSchema,
+  renderSchema,
+  rulesValidate,
+  brokenRules,
+  isFilled,
+  checkDefinition,
+  tidyRules,
+  emptyDefinition,
+  kindsOf,
+  fieldsOf,
+  hasOptions,
+  defaultKey,
+  FORM_STATE_BEHAVIOR,
+  PHONE_PATTERN,
+  TEXT_LIMITS,
+  FIELD_KINDS,
+} from "./compile"
+export type { DefinitionProblem } from "./compile"
 
-// RJSF 커스텀 컴포넌트
-export { 
-  ObjectFieldTemplate,
-  SubmitButton,
-  customTemplates,
-  customWidgets,
-  PhoneNumberWidget,
-  UpDownWidget,
-} from "./components"
+export { KIND_LABELS, SECTION_TYPE_LABELS, SELECT_DISPLAY_LABELS } from "./constants"
 
-// 타입
 export type {
-  FormDefinition,
-  SectionDefinition,
-  FieldDefinition,
+  FieldKind,
+  FieldOption,
   FieldSchema,
   FieldUiSchema,
-  FormSchemas,
-  FormBuilderProps,
-  UseFormBuilderReturn,
+  FieldExtra,
+  FieldDefinition,
   SectionType,
+  SectionDefinition,
   ImageContent,
-  DescriptionContent,
+  FormRule,
+  FormDefinition,
+  JsonObject,
+  StoredRule,
+  LayoutSection,
+  FormSchemas,
+  UseFormBuilderOptions,
+  UseFormBuilderReturn,
+  FormBuilderIcons,
+  FormBuilderProps,
 } from "./types"
-

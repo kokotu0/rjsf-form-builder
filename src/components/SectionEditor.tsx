@@ -1,60 +1,26 @@
-import { useState } from "react"
-import {
-  DndContext,
-  closestCenter,
-  KeyboardSensor,
-  PointerSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core"
-import {
-  SortableContext,
-  sortableKeyboardCoordinates,
-  verticalListSortingStrategy,
-} from "@dnd-kit/sortable"
-import {
-  Box,
-  Button,
-  IconButton,
-  TextField,
-  Typography,
-  Accordion,
-  AccordionSummary,
-  AccordionDetails,
-  Stack,
-  Divider,
-  Select,
-  MenuItem,
-  FormControl,
-  InputLabel,
-  Chip,
-} from "@mui/material"
-import {
-  Add as AddIcon,
-  Delete as DeleteIcon,
-  KeyboardArrowUp as UpIcon,
-  KeyboardArrowDown as DownIcon,
-  ExpandMore as ExpandMoreIcon,
-  DragIndicator as DragIcon,
-  Image as ImageIcon,
-  Settings as SettingsIcon,
-} from "@mui/icons-material"
-import type { SectionDefinition, FieldDefinition, SectionType, ImageContent } from "../types"
-import { SortableFieldEditor } from "./SortableFieldEditor"
-import { ImageModal } from "./ImageModal"
+import { useState, type ReactNode } from "react"
+import { DndContext, closestCenter, KeyboardSensor, PointerSensor, useSensor, useSensors, type DragEndEvent } from "@dnd-kit/core"
+import { SortableContext, sortableKeyboardCoordinates, verticalListSortingStrategy } from "@dnd-kit/sortable"
+import { Box, Button, IconButton, MenuItem, Stack, TextField, Typography } from "@mui/material"
 
-// 섹션 타입 옵션
-const SECTION_TYPE_OPTIONS: { value: SectionType; label: string }[] = [
-  { value: "fields", label: "📋 필드" },
-  { value: "image", label: "🖼️ 이미지" },
-  { value: "description", label: "📝 설명" },
-]
+import { GRID_CHOICES, SECTION_TYPE_LABELS } from "../constants"
+import type { FieldDefinition, FieldKind, ImageContent, SectionDefinition, SectionType } from "../types"
+import { ImageModal } from "./ImageModal"
+import { SortableFieldEditor } from "./SortableFieldEditor"
+import { useIcons } from "./icons"
 
 export interface SectionEditorProps {
   section: SectionDefinition
   isFirst: boolean
   isLast: boolean
+  /** 섹션이 하나뿐이면 지우지 못한다 */
+  canRemove: boolean
+  kinds: FieldKind[]
+  sectionTypes: SectionType[]
+  locked: ReadonlyMap<string, FieldKind>
+  showKeys?: boolean
+  /** 막 더한 항목. 펼친 채로 보인다 */
+  openFieldId?: string | null
   selectedFieldId?: string | null
   onFieldSelect?: (fieldId: string | null) => void
   onUpdate: (sectionId: string, updates: Partial<SectionDefinition>) => void
@@ -62,9 +28,14 @@ export interface SectionEditorProps {
   onMove: (sectionId: string, direction: "up" | "down") => void
   onAddField: (sectionId: string) => void
   onUpdateField: (sectionId: string, fieldId: string, updates: Partial<FieldDefinition>) => void
+  onKind: (fieldId: string, kind: FieldKind) => void
   onRemoveField: (sectionId: string, fieldId: string) => void
   onMoveField: (sectionId: string, fieldId: string, direction: "up" | "down") => void
   onReorderField: (sectionId: string, activeId: string, overId: string) => void
+  renderFieldExtra?: (field: FieldDefinition, update: (updates: Partial<FieldDefinition>) => void) => ReactNode
+  /** 섹션 끝에서 넘어갈 곳이 있는지. 첫 항목의 위, 끝 항목의 아래 단추에 쓴다 */
+  hasPrevFields?: boolean
+  hasNextFields?: boolean
   dragHandleProps?: Record<string, unknown>
 }
 
@@ -72,6 +43,12 @@ export const SectionEditor = ({
   section,
   isFirst,
   isLast,
+  canRemove,
+  kinds,
+  sectionTypes,
+  locked,
+  showKeys,
+  openFieldId,
   selectedFieldId,
   onFieldSelect,
   onUpdate,
@@ -79,326 +56,131 @@ export const SectionEditor = ({
   onMove,
   onAddField,
   onUpdateField,
+  onKind,
   onRemoveField,
   onMoveField,
   onReorderField,
+  renderFieldExtra,
+  hasPrevFields,
+  hasNextFields,
   dragHandleProps,
 }: SectionEditorProps) => {
-  const [imageModalOpen, setImageModalOpen] = useState(false)
-
-  // 필드 드래그 센서
-  const sensors = useSensors(
-    useSensor(PointerSensor),
-    useSensor(KeyboardSensor, {
-      coordinateGetter: sortableKeyboardCoordinates,
-    })
-  )
-
-  const handleFieldDragEnd = (event: DragEndEvent) => {
+  const icons = useIcons()
+  const [imageOpen, setImageOpen] = useState(false)
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 4 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }))
+  const onDragEnd = (event: DragEndEvent) => {
     const { active, over } = event
-    if (over && active.id !== over.id) {
-      onReorderField(section.id, active.id as string, over.id as string)
-    }
+    if (over && active.id !== over.id) onReorderField(section.id, String(active.id), String(over.id))
   }
-
-  // 섹션 타입별 라벨
-  const typeLabel = SECTION_TYPE_OPTIONS.find(t => t.value === section.type)?.label || "📋 필드"
-
-  // 이미지 컨텐츠
-  const imageContent = section.content as ImageContent | undefined
-  const imageSrc = imageContent?.url || imageContent?.file
+  const image = section.content as ImageContent | undefined
+  const imageSrc = image?.url || image?.file
 
   return (
-    <>
-      <Accordion defaultExpanded sx={{ mb: 1 }}>
-        <AccordionSummary expandIcon={<ExpandMoreIcon />}>
-          <Stack direction="row" spacing={1} alignItems="center" flex={1} mr={1}>
-            {/* 드래그 핸들 */}
-            <Box
-              {...dragHandleProps}
-              sx={{ cursor: "grab", display: "flex" }}
-              onClick={(e) => e.stopPropagation()}
-            >
-              <DragIcon sx={{ color: "text.secondary" }} />
-            </Box>
-            <Chip label={typeLabel} size="small" variant="outlined" />
-            <Typography fontWeight={500}>{section.title}</Typography>
-            {section.type === "fields" && (
-              <Chip label={`${section.fields.length}개`} size="small" />
-            )}
-            <Box flex={1} />
-            
-            {/* 위/아래 버튼 */}
-            <IconButton
-              component="span"
-              size="small"
-              disabled={isFirst}
-              onClick={(e) => {
-                e.stopPropagation()
-                onMove(section.id, "up")
-              }}
-            >
-              <UpIcon fontSize="small" />
-            </IconButton>
-            <IconButton
-              component="span"
-              size="small"
-              disabled={isLast}
-              onClick={(e) => {
-                e.stopPropagation()
-                onMove(section.id, "down")
-              }}
-            >
-              <DownIcon fontSize="small" />
-            </IconButton>
-            <IconButton
-              component="span"
-              size="small"
-              color="error"
-              onClick={(e) => {
-                e.stopPropagation()
-                onRemove(section.id)
-              }}
-            >
-              <DeleteIcon fontSize="small" />
-            </IconButton>
-          </Stack>
-        </AccordionSummary>
-
-        <AccordionDetails>
-          {/* 섹션명 (hidden) */}
-          <input type="hidden" value={section.name} />
-          
-          {/* 섹션 기본 설정 */}
-          <Stack direction="row" spacing={1} mb={2} flexWrap="wrap">
-            <FormControl size="small" sx={{ minWidth: 100 }}>
-              <InputLabel>타입</InputLabel>
-              <Select
-                value={section.type}
-                label="타입"
-                onChange={(e) => onUpdate(section.id, { type: e.target.value as SectionType })}
-              >
-                {SECTION_TYPE_OPTIONS.map(opt => (
-                  <MenuItem key={opt.value} value={opt.value}>{opt.label}</MenuItem>
+    <Box sx={{ border: 1, borderColor: "divider", borderRadius: 1.5, bgcolor: "background.default", p: 1.5, mb: 2 }}>
+      <Stack direction="row" spacing={0.5} alignItems="flex-start" sx={{ mb: 1 }}>
+        {dragHandleProps && (
+          <Box {...dragHandleProps} aria-label="섹션 끌어서 옮기기" sx={{ display: "flex", color: "text.disabled", cursor: "grab", p: 0.5, mt: 0.75 }}>
+            {icons.drag}
+          </Box>
+        )}
+        <Stack spacing={1} sx={{ flex: 1, minWidth: 0 }}>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            {sectionTypes.length > 1 && (
+              <TextField select size="small" label="섹션 종류" value={section.type} onChange={(e) => onUpdate(section.id, { type: e.target.value as SectionType })} sx={{ minWidth: 110 }}>
+                {sectionTypes.map((t) => (
+                  <MenuItem key={t} value={t}>
+                    {SECTION_TYPE_LABELS[t]}
+                  </MenuItem>
                 ))}
-              </Select>
-            </FormControl>
-            
-            {/* 필드/설명 섹션만 제목 표시 */}
-            {section.type !== "image" && (
+              </TextField>
+            )}
+            <TextField size="small" label="섹션 제목" placeholder="비워 두면 제목 없이 보입니다" value={section.title} onChange={(e) => onUpdate(section.id, { title: e.target.value })} sx={{ flex: 1 }} />
+            {section.type !== "description" && (
               <TextField
-                key={`title-${section.id}`}
+                select
                 size="small"
-                label="제목"
-                defaultValue={section.title}
-                onBlur={(e) => onUpdate(section.id, { title: e.target.value })}
-                sx={{ flex: 1, minWidth: 150 }}
-              />
-            )}
-            
-            {/* 필드 섹션: 그리드 */}
-            {section.type === "fields" && (
-              <FormControl size="small" sx={{ minWidth: 80 }}>
-                <InputLabel>그리드</InputLabel>
-                <Select
-                  value={section.ui.grid || 1}
-                  label="그리드"
-                  onChange={(e) =>
-                    onUpdate(section.id, {
-                      ui: { ...section.ui, grid: Number(e.target.value) },
-                    })
-                  }
-                >
-                  <MenuItem value={1}>1열</MenuItem>
-                  <MenuItem value={2}>2열</MenuItem>
-                  <MenuItem value={3}>3열</MenuItem>
-                  <MenuItem value={4}>4열</MenuItem>
-                </Select>
-              </FormControl>
-            )}
-            
-            {/* 이미지 섹션: 크기 (그리드) */}
-            {section.type === "image" && (
-              <FormControl size="small" sx={{ minWidth: 100 }}>
-                <InputLabel>크기</InputLabel>
-                <Select
-                  value={section.ui.grid || 1}
-                  label="크기"
-                  onChange={(e) =>
-                    onUpdate(section.id, {
-                      ui: { ...section.ui, grid: Number(e.target.value) },
-                    })
-                  }
-                >
-                  <MenuItem value={1}>전체</MenuItem>
-                  <MenuItem value={2}>1/2</MenuItem>
-                  <MenuItem value={3}>1/3</MenuItem>
-                  <MenuItem value={4}>1/4</MenuItem>
-                </Select>
-              </FormControl>
-            )}
-            
-            <FormControl size="small" sx={{ minWidth: 80 }}>
-              <InputLabel>배경</InputLabel>
-              <Select
-                value={section.ui.backgroundColor || ""}
-                label="배경"
-                onChange={(e) =>
-                  onUpdate(section.id, {
-                    ui: { ...section.ui, backgroundColor: e.target.value || undefined },
-                  })
-                }
+                label={section.type === "image" ? "크기" : "한 줄에"}
+                value={section.ui.grid ?? 1}
+                onChange={(e) => onUpdate(section.id, { ui: { ...section.ui, grid: Number(e.target.value) } })}
+                sx={{ minWidth: 100 }}
               >
-                <MenuItem value="">없음</MenuItem>
-                <MenuItem value="#f5f5f5">회색</MenuItem>
-                <MenuItem value="#e3f2fd">파랑</MenuItem>
-                <MenuItem value="#e8f5e9">녹색</MenuItem>
-                <MenuItem value="#fff3e0">주황</MenuItem>
-                <MenuItem value="#fce4ec">분홍</MenuItem>
-              </Select>
-            </FormControl>
+                {GRID_CHOICES.map((n) => (
+                  <MenuItem key={n} value={n}>
+                    {section.type === "image" ? (n === 1 ? "전체" : `1/${n}`) : `${n}개`}
+                  </MenuItem>
+                ))}
+              </TextField>
+            )}
           </Stack>
-
-          {/* 필드 섹션: 간단한 설명 */}
-          {section.type === "fields" && (
+          {section.type !== "image" && (
             <TextField
-              key={`desc-${section.id}`}
               size="small"
-              label="섹션 설명"
-              fullWidth
-              defaultValue={section.description || ""}
-              onBlur={(e) => onUpdate(section.id, { description: e.target.value })}
-              sx={{ mb: 2 }}
+              label={section.type === "description" ? "설명 글" : "섹션 설명"}
+              multiline={section.type === "description"}
+              minRows={section.type === "description" ? 3 : undefined}
+              value={section.description ?? ""}
+              onChange={(e) => onUpdate(section.id, { description: e.target.value || undefined })}
             />
           )}
+        </Stack>
+        <IconButton size="small" aria-label="섹션 위로" disabled={isFirst} onClick={() => onMove(section.id, "up")}>
+          {icons.up}
+        </IconButton>
+        <IconButton size="small" aria-label="섹션 아래로" disabled={isLast} onClick={() => onMove(section.id, "down")}>
+          {icons.down}
+        </IconButton>
+        <IconButton size="small" aria-label="섹션 지우기" disabled={!canRemove} onClick={() => onRemove(section.id)}>
+          {icons.remove}
+        </IconButton>
+      </Stack>
 
-          {/* 설명 섹션: 멀티라인 설명 */}
-          {section.type === "description" && (
-            <TextField
-              key={`desc-ml-${section.id}`}
-              size="small"
-              label="설명 내용"
-              fullWidth
-              multiline
-              minRows={4}
-              defaultValue={section.description || ""}
-              onBlur={(e) => onUpdate(section.id, { description: e.target.value })}
-              sx={{ mb: 2 }}
-              placeholder="설명을 입력하세요..."
-            />
-          )}
-
-          {section.type !== "image" && <Divider sx={{ mb: 2 }} />}
-
-          {/* 섹션 타입별 컨텐츠 */}
-          {section.type === "fields" && (
-            <>
-              {/* 필드 목록 */}
-              <Box 
-                sx={{ 
-                  maxHeight: 600, 
-                  overflow: "auto", 
-                  mb: 1,
-                  bgcolor: "grey.50",
-                  borderRadius: 1,
-                  p: section.fields.length > 0 ? 1 : 0,
-                }}
-              >
-                {section.fields.length === 0 ? (
-                  <Typography color="text.secondary" textAlign="center" py={3}>
-                    아직 필드가 없습니다
-                  </Typography>
-                ) : (
-                  <DndContext
-                    sensors={sensors}
-                    collisionDetection={closestCenter}
-                    onDragEnd={handleFieldDragEnd}
-                  >
-                    <SortableContext
-                      items={section.fields.map((f) => f.id)}
-                      strategy={verticalListSortingStrategy}
-                    >
-                      {section.fields.map((field, index) => (
-                        <SortableFieldEditor
-                          key={field.id}
-                          field={field}
-                          sectionId={section.id}
-                          isFirst={index === 0}
-                          isLast={index === section.fields.length - 1}
-                          isSelected={selectedFieldId === field.id}
-                          onSelect={() => onFieldSelect?.(field.id)}
-                          onUpdate={onUpdateField}
-                          onRemove={onRemoveField}
-                          onMove={onMoveField}
-                        />
-                      ))}
-                    </SortableContext>
-                  </DndContext>
-                )}
-              </Box>
-              <Button
-                size="small"
-                startIcon={<AddIcon />}
-                onClick={() => onAddField(section.id)}
-                fullWidth
-              >
-                필드 추가
-              </Button>
-            </>
-          )}
-
-          {section.type === "image" && (
-            <Box>
-              {imageSrc ? (
-                <Box sx={{ textAlign: "center" }}>
-                  <Box
-                    component="img"
-                    src={imageSrc}
-                    alt={imageContent?.alt || ""}
-                    sx={{
-                      maxWidth: "100%",
-                      maxHeight: 200,
-                      objectFit: "contain",
-                      borderRadius: 1,
-                      border: "1px solid",
-                      borderColor: "divider",
-                    }}
+      {section.type === "fields" && (
+        <>
+          {section.fields.length === 0 ? (
+            <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: "center" }}>
+              항목이 없습니다.
+            </Typography>
+          ) : (
+            <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={onDragEnd}>
+              <SortableContext items={section.fields.map((f) => f.id)} strategy={verticalListSortingStrategy}>
+                {section.fields.map((field, index) => (
+                  <SortableFieldEditor
+                    key={field.id}
+                    field={field}
+                    sectionId={section.id}
+                    isFirst={index === 0 && !hasPrevFields}
+                    isLast={index === section.fields.length - 1 && !hasNextFields}
+                    locked={locked.has(field.name)}
+                    kinds={kinds}
+                    showKey={showKeys}
+                    defaultExpanded={field.id === openFieldId}
+                    isSelected={selectedFieldId === field.id}
+                    onSelect={onFieldSelect ? () => onFieldSelect(field.id) : undefined}
+                    onUpdate={onUpdateField}
+                    onKind={onKind}
+                    onRemove={onRemoveField}
+                    onMove={onMoveField}
+                    renderExtra={renderFieldExtra}
                   />
-                  <Box sx={{ mt: 1 }}>
-                    <Button
-                      size="small"
-                      startIcon={<SettingsIcon />}
-                      onClick={() => setImageModalOpen(true)}
-                    >
-                      변경
-                    </Button>
-                  </Box>
-                </Box>
-              ) : (
-                <Button
-                  variant="outlined"
-                  startIcon={<ImageIcon />}
-                  onClick={() => setImageModalOpen(true)}
-                  fullWidth
-                  sx={{ py: 3 }}
-                >
-                  이미지 추가
-                </Button>
-              )}
-            </Box>
+                ))}
+              </SortableContext>
+            </DndContext>
           )}
+          <Button size="small" startIcon={icons.add} onClick={() => onAddField(section.id)}>
+            항목 추가
+          </Button>
+        </>
+      )}
 
-          {/* 설명 섹션은 위 설명 필드로 처리되므로 추가 UI 없음 */}
-        </AccordionDetails>
-      </Accordion>
-
-      {/* 이미지 모달 */}
-      <ImageModal
-        open={imageModalOpen}
-        onClose={() => setImageModalOpen(false)}
-        onSave={(content) => onUpdate(section.id, { content })}
-        initialContent={imageContent}
-      />
-    </>
+      {section.type === "image" && (
+        <Box>
+          {imageSrc && <Box component="img" src={imageSrc} alt={image?.alt ?? ""} sx={{ display: "block", maxWidth: "100%", maxHeight: 200, borderRadius: 1, mb: 1 }} />}
+          <Button size="small" variant="outlined" onClick={() => setImageOpen(true)}>
+            {imageSrc ? "이미지 바꾸기" : "이미지 넣기"}
+          </Button>
+          <ImageModal open={imageOpen} onClose={() => setImageOpen(false)} onSave={(content) => onUpdate(section.id, { content })} initialContent={image} />
+        </Box>
+      )}
+    </Box>
   )
 }

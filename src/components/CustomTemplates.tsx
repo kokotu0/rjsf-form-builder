@@ -1,229 +1,113 @@
-import { Box, Button, Paper, Typography } from "@mui/material"
+import { Box, Button, Typography } from "@mui/material"
 import type { ObjectFieldTemplateProps, SubmitButtonProps } from "@rjsf/utils"
 import { getSubmitButtonOptions } from "@rjsf/utils"
 
-// ============ 타입 정의 ============
+import type { LayoutSection } from "../types"
 
-interface SectionOptions {
-  grid?: number
-  backgroundColor?: string
-  headerImage?: string
-  sectionType?: "image" | "description"
-  imageSrc?: string
-  imageAlt?: string
-  descriptionText?: string
-  descriptionTitle?: string
+const columns = (grid: number | undefined) => Math.max(1, Math.min(3, grid ?? 1))
+
+function Grid({ grid, children }: { grid?: number; children: React.ReactNode }) {
+  return <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: `repeat(${columns(grid)}, minmax(0, 1fr))` }, columnGap: 2, rowGap: 2 }}>{children}</Box>
 }
 
-// ============ ObjectFieldTemplate ============
-
-/**
- * 기본 ObjectFieldTemplate
- */
-export const ObjectFieldTemplate = (props: ObjectFieldTemplateProps) => {
-  const { title, description, properties, uiSchema } = props
-  const options = uiSchema?.["ui:options"] as SectionOptions | undefined
-  const gridColumns = options?.grid || 1
-  const backgroundColor = options?.backgroundColor
-  const headerImage = options?.headerImage
-  const sectionType = options?.sectionType
-
-  // 이미지 섹션
-  if (sectionType === "image") {
-    const imageSrc = options?.imageSrc
-    
-    if (!imageSrc) {
-      return (
-        <Paper
-          variant="outlined"
-          sx={{
-            mb: 2,
-            p: 3,
-            bgcolor: backgroundColor || "grey.100",
-            textAlign: "center",
-          }}
-        >
-          <Typography color="text.secondary">
-            이미지가 설정되지 않았습니다
-          </Typography>
-        </Paper>
-      )
-    }
-
-    return (
-      <Paper
-        variant="outlined"
-        sx={{
-          mb: 2,
-          bgcolor: backgroundColor || undefined,
-          overflow: "hidden",
-          textAlign: "center",
-        }}
-      >
-        <Box
-          component="img"
-          src={imageSrc}
-          alt={options?.imageAlt || ""}
-          sx={{
-            width: gridColumns === 1 ? "100%" : `${100 / gridColumns}%`,
-            objectFit: "contain",
-            display: "block",
-            mx: "auto",
-          }}
-        />
-      </Paper>
-    )
-  }
-
-  // 설명 섹션
-  if (sectionType === "description") {
-    const descText = options?.descriptionText
-    const descTitle = options?.descriptionTitle
-    
-    if (!descText && !descTitle) {
-      return (
-        <Paper
-          variant="outlined"
-          sx={{
-            mb: 2,
-            p: 3,
-            bgcolor: backgroundColor || "grey.100",
-            textAlign: "center",
-          }}
-        >
-          <Typography color="text.secondary">
-            설명이 입력되지 않았습니다
-          </Typography>
-        </Paper>
-      )
-    }
-
-      return (
-        <Paper
-          variant="outlined"
-          sx={{
-            mb: 2,
-            p: 3,
-            bgcolor: backgroundColor || undefined,
-          }}
-        >
-          {descTitle && (
-            <Typography variant="h5" fontWeight={600} gutterBottom>
-              {descTitle}
-            </Typography>
-          )}
-          {descText && (
-            <Typography variant="body1" sx={{ whiteSpace: "pre-wrap", fontSize: "1.1rem", lineHeight: 1.8 }}>
-              {descText}
-            </Typography>
-          )}
-        </Paper>
-      )
-    }
-
-  // 필드 섹션 (기본)
-  const isSection = properties.length > 0
-
-  if (isSection) {
-    return (
-      <Paper
-        variant="outlined"
-        sx={{
-          mb: 2,
-          bgcolor: backgroundColor || undefined,
-          overflow: "hidden",
-        }}
-      >
-        {headerImage && (
-          <Box
-            component="img"
-            src={headerImage}
-            alt=""
-            sx={{ width: "100%", objectFit: "cover" }}
-          />
-        )}
-        <Box sx={{ p: 2 }}>
-          {title && (
-            <Typography variant="h6" gutterBottom>
-              {title}
-            </Typography>
-          )}
-          {description && (
-            <Typography variant="body2" color="text.secondary" mb={2}>
-              {description}
-            </Typography>
-          )}
-          <Box
-            sx={{
-              display: "grid",
-              gridTemplateColumns: `repeat(${gridColumns}, 1fr)`,
-              gap: 2,
-            }}
-          >
-            {properties.map((prop) => (
-              <Box key={prop.name}>{prop.content}</Box>
-            ))}
-          </Box>
-        </Box>
-      </Paper>
-    )
-  }
-
-  // 루트 레벨
+function Heading({ title, description }: { title?: string; description?: string }) {
+  if (!title && !description) return null
   return (
-    <Box>
+    <>
       {title && (
-        <Typography variant="h5" gutterBottom>
+        <Typography variant="subtitle2" component="h3" sx={{ mb: description ? 0.5 : 1.5 }}>
           {title}
         </Typography>
       )}
       {description && (
-        <Typography variant="body2" color="text.secondary" mb={2}>
+        <Typography variant="body2" color="text.secondary" sx={{ mb: 1.5, whiteSpace: "pre-wrap" }}>
           {description}
         </Typography>
       )}
-      {properties.map((prop) => (
-        <Box key={prop.name}>{prop.content}</Box>
-      ))}
+    </>
+  )
+}
+
+/**
+ * 루트 uiSchema 의 `ui:options.sections` 를 읽어 섹션마다 제목, 설명, 칸 나눔(1~3)으로 그린다.
+ * data 는 평평하고 섹션은 배치일 뿐이다. 섹션에 없는 항목은 끝에 그린다.
+ * sections 가 없으면 받은 순서대로 그린다(0.1 의 섹션마다 중첩한 data 도 `ui:options.grid` 로 그린다).
+ */
+export const ObjectFieldTemplate = (props: ObjectFieldTemplateProps) => {
+  const { title, description, properties, uiSchema } = props
+  const options = uiSchema?.["ui:options"] as { sections?: LayoutSection[]; grid?: number } | undefined
+  const sections = options?.sections
+
+  if (!sections) {
+    return (
+      <Box sx={{ mb: 2 }}>
+        <Heading title={typeof title === "string" ? title : undefined} description={typeof description === "string" ? description : undefined} />
+        <Grid grid={options?.grid}>
+          {properties.map((p) => (
+            <Box key={p.name}>{p.content}</Box>
+          ))}
+        </Grid>
+      </Box>
+    )
+  }
+
+  const byName = new Map(properties.map((p) => [p.name, p]))
+  const placed = new Set(sections.flatMap((s) => s.fields))
+  const rest = properties.filter((p) => !placed.has(p.name))
+  return (
+    <Box>
+      {sections.map((s, i) => {
+        if (s.type === "image") {
+          if (!s.src) return null
+          return (
+            <Box key={i} sx={{ mb: 3 }}>
+              <Heading title={s.title} />
+              <Box component="img" src={s.src} alt={s.alt ?? ""} sx={{ display: "block", maxWidth: `${100 / columns(s.grid)}%`, width: "100%", borderRadius: 1 }} />
+            </Box>
+          )
+        }
+        if (s.type === "description") {
+          return (
+            <Box key={i} sx={{ mb: 3 }}>
+              <Heading title={s.title} description={s.description} />
+            </Box>
+          )
+        }
+        const shown = s.fields.filter((f) => byName.has(f) && !byName.get(f)!.hidden)
+        if (shown.length === 0) return null
+        return (
+          <Box key={i} sx={{ mb: 3 }}>
+            <Heading title={s.title} description={s.description} />
+            <Grid grid={s.grid}>
+              {shown.map((f) => (
+                <Box key={f}>{byName.get(f)!.content}</Box>
+              ))}
+            </Grid>
+          </Box>
+        )
+      })}
+      {rest.length > 0 && (
+        <Grid>
+          {rest.map((p) => (
+            <Box key={p.name}>{p.content}</Box>
+          ))}
+        </Grid>
+      )}
     </Box>
   )
 }
 
-/**
- * ObjectFieldTemplate 팩토리 (클릭 콜백 지원)
- * @deprecated ObjectFieldTemplate 직접 사용 권장
- */
-export const createObjectFieldTemplate = (
-  _onFieldClick?: (fieldId: string) => void
-) => {
-  return ObjectFieldTemplate
-}
-
-// ============ SubmitButton ============
-
-/**
- * 커스텀 Submit 버튼
- */
+/** 제출 단추. `ui:submitButtonOptions.norender` 면 그리지 않는다 */
 export const SubmitButton = (props: SubmitButtonProps) => {
-  const { uiSchema } = props
-  const { norender } = getSubmitButtonOptions(uiSchema)
-  
-  if (norender) {
-    return null
-  }
-  
+  const { norender, submitText } = getSubmitButtonOptions(props.uiSchema)
+  if (norender) return null
   return (
-    <Button type="submit" variant="contained" sx={{ float: "right" }}>
-      제출
+    <Button type="submit" variant="contained" disableElevation sx={{ mt: 1 }}>
+      {submitText && submitText !== "Submit" ? submitText : "제출"}
     </Button>
   )
 }
 
-// ============ Export ============
-
-/**
- * 모든 커스텀 템플릿 export
- */
 export const customTemplates = {
   ObjectFieldTemplate,
   ButtonTemplates: { SubmitButton },

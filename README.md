@@ -1,27 +1,15 @@
 # RJSF Form Builder
 
-[react-jsonschema-form](https://github.com/rjsf-team/react-jsonschema-form)을 위한 시각적 폼 빌더입니다. 드래그 앤 드롭을 지원합니다.
+[react-jsonschema-form](https://github.com/rjsf-team/react-jsonschema-form)(RJSF) 6 과 MUI 로 양식을 만들고 그리는 패키지입니다.
+편집기(`FormBuilder`), 정의를 다루는 훅(`useFormBuilder`), 정의를 JSON Schema · UI Schema 로 바꾸는 순수 함수(`compileDefinition`),
+저장한 양식을 그리는 `FormView` 가 들어 있습니다.
 
-**React 18 & 19 호환**
-
-## 기능
-
-- 🎨 **시각적 폼 빌더** - 섹션과 필드를 드래그 앤 드롭으로 구성
-- 📋 **다양한 섹션 타입** - 필드, 이미지, 설명
-- 🎯 **다양한 필드 타입** - 텍스트, 숫자, 선택, 다중선택, 체크박스, 파일 업로드
-- 🖼️ **이미지 섹션** - 업로드 또는 URL로 이미지 추가, 크기 조절
-- 📝 **설명 섹션** - 긴 설명 텍스트 추가
-- 🎨 **커스터마이즈** - 배경색, 그리드 레이아웃, 헤더 이미지, maxHeight
-- 📱 **반응형** - 그리드 기반 레이아웃
-- 🔧 **커스텀 위젯** - 핸드폰 번호, 증감 버튼 입력
-- ⚡ **실시간 미리보기** - 변경사항 즉시 확인
+React 18 · 19, MUI 6 · 7, RJSF 6.
 
 ## 설치
 
 ```bash
 npm install @kokotu0/rjsf-form-builder
-
-# 필수 의존성
 npm install @rjsf/core @rjsf/mui @rjsf/utils @rjsf/validator-ajv8
 npm install @mui/material @mui/icons-material @emotion/react @emotion/styled
 ```
@@ -29,168 +17,120 @@ npm install @mui/material @mui/icons-material @emotion/react @emotion/styled
 ## 빠른 시작
 
 ```tsx
-import { useState } from 'react'
-import { 
-  FormBuilder, 
-  ObjectFieldTemplate, 
-  SubmitButton, 
-  customWidgets 
-} from '@kokotu0/rjsf-form-builder'
-import Form from '@rjsf/mui'
-import validator from '@rjsf/validator-ajv8'
-import type { RJSFSchema, UiSchema } from '@rjsf/utils'
+import { useState } from "react"
+import { FormBuilder, FormView, useFormBuilder } from "@kokotu0/rjsf-form-builder"
 
 function App() {
-  const [schema, setSchema] = useState<RJSFSchema>({})
-  const [uiSchema, setUiSchema] = useState<UiSchema>({})
-  const [formData, setFormData] = useState({})
-
+  const builder = useFormBuilder()
+  const [data, setData] = useState({})
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-      {/* 폼 미리보기 */}
-      <Form
-        schema={schema}
-        uiSchema={uiSchema}
-        formData={formData}
-        validator={validator}
-        onChange={(e) => setFormData(e.formData)}
-        onSubmit={(e) => console.log('제출:', e.formData)}
-        templates={{
-          ObjectFieldTemplate,
-          ButtonTemplates: { SubmitButton },
-        }}
-        widgets={customWidgets}
-      />
-
-      {/* 폼 빌더 */}
-      <FormBuilder
-        onSchemaChange={setSchema}
-        onUiSchemaChange={setUiSchema}
-      />
+    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <FormBuilder builder={builder} />
+      <FormView schema={builder.schemas.jsonSchema} uiSchema={builder.schemas.uiSchema} formData={data} onChange={setData} />
     </div>
   )
 }
 ```
 
-## API
+저장할 것은 `builder.form`(정의)과 `builder.schemas`(스키마)입니다. 정의를 다시 `useFormBuilder(정의)` 에 넣으면 편집을 이어 갑니다.
 
-### FormBuilder Props
+## 정의와 스키마
 
-| Prop | 타입 | 설명 |
-|------|------|------|
-| `onSchemaChange` | `(schema: RJSFSchema) => void` | JSON Schema 변경 시 호출 |
-| `onUiSchemaChange` | `(uiSchema: UiSchema) => void` | UI Schema 변경 시 호출 |
-| `onChange` | `(schemas: FormSchemas) => void` | 두 스키마 모두 전달 (deprecated) |
-| `initialForm` | `FormDefinition` | 초기 폼 정의 |
-| `selectedFieldId` | `string \| null` | 현재 선택된 필드 ID |
-| `onFieldSelect` | `(fieldId: string \| null) => void` | 필드 선택 시 호출 |
+```
+FormDefinition { id, nextKey, sections, rules }
+  └── SectionDefinition { id, name, title, description, type, fields, ui: { grid } }
+        └── FieldDefinition { id, name, kind, required, schema, ui, extra }
+```
 
-### 커스텀 템플릿
+- **data 는 평평합니다.** 섹션은 배치일 뿐이고 루트 uiSchema 의 `ui:options.sections` 에
+  `{ title, fields, grid, description }` 로 적습니다. `ObjectFieldTemplate` 이 이것을 읽어 섹션마다 그립니다.
+  항목을 다른 섹션으로 옮겨도 값 자리는 그대로입니다.
+- **키는 `field1`, `field2` … 입니다.** `nextKey` 가 다음 번호이고 지운 번호는 다시 쓰지 않습니다.
+  `useFormBuilder(정의, { keyOf })` 로 키 만드는 법을 바꿀 수 있습니다.
+- **`kind`** 가 항목 종류입니다: `text` `textarea` `phone` `email` `number` `integer` `date` `select` `multiselect` `checkbox`.
+- **선택지는 `{ value, label }` 입니다.** 값은 처음 이름으로 정하고, 이름을 바꿔도 값은 그대로입니다.
+  `select` 는 `oneOf: [{ const, title }]`, `multiselect` 는 `items.oneOf` 와 `uniqueItems` 로 바뀝니다.
+- **루트 `required`** 는 항목의 `required` 에서 만듭니다.
+- **`extra`** 의 `x-` 로 시작하는 설정을 항목 스키마에 그대로 싣습니다. 예: `{ "x-summary": "lead" }`.
+- **전화번호** 는 입력한 그대로 둡니다. 숫자, `+`, `-`, 괄호, 점, 빈칸을 받습니다(`PHONE_PATTERN`).
+- **글 길이**: `text` 는 기본 200자(최대 2000), `textarea` 는 기본 5000자(최대 20000).
+- **규칙 `oneOfRequired`**: 고른 항목 중 하나는 값이 있어야 합니다. 스키마에는 루트 `anyOf`
+  (규칙이 여럿이면 `allOf` 안의 `anyOf`)와 `x-rules` 로 들어갑니다. 서버는 스키마 그대로 검사하면 됩니다.
+  RJSF 6 은 루트 `anyOf` 를 고르기 상자로 그리므로, `FormView` 는 `renderSchema` 로 빼고 그린 뒤
+  `rulesValidate` 로 같은 규칙을 검사합니다.
+
+## 편집기
 
 ```tsx
-import { ObjectFieldTemplate, SubmitButton, customTemplates } from '@kokotu0/rjsf-form-builder'
-
-// 개별 템플릿 사용
-<Form
-  templates={{
-    ObjectFieldTemplate,
-    ButtonTemplates: { SubmitButton },
-  }}
+<FormBuilder
+  builder={builder}               // 없으면 initialForm 으로 안에서 만든다
+  kinds={["text", "select"]}      // 고를 수 있는 종류
+  sectionTypes={["fields"]}       // 하나면 섹션 종류 고르기를 숨긴다
+  showRules                       // 규칙 편집. 기본 true
+  showKeys                        // 항목 키 보이기. 기본 true
+  renderFieldExtra={(field, update) => <MySetting field={field} onChange={update} />}
+  icons={{ add: <Plus size={16} /> }}  // 아이콘 바꾸기
 />
-
-// 또는 템플릿 객체 사용
-<Form templates={customTemplates} />
 ```
 
-### 커스텀 위젯
+- 처음 정의에 든 항목(저장한 항목)은 종류를 바꾸지 못합니다. `useFormBuilder(정의, { locked })` 로 직접 정할 수 있습니다.
+- 섹션을 지우면 항목은 옆 섹션으로 옮깁니다. 항목을 지우면 규칙에서도 빠집니다.
+- 저장 전에 `checkDefinition(builder.form)` 으로 빈 제목, 겹치는 선택지, 항목이 둘 아래인 규칙을 찾습니다.
+
+## 그리기
 
 ```tsx
-import { customWidgets, PhoneNumberWidget, UpDownWidget } from '@kokotu0/rjsf-form-builder'
-
-// 모든 커스텀 위젯 사용
-<Form widgets={customWidgets} />
-
-// 또는 개별 위젯 사용
-<Form widgets={{ phone: PhoneNumberWidget, updown: UpDownWidget }} />
+const ref = useRef<FormViewHandle>(null)
+<FormView ref={ref} schema={jsonSchema} uiSchema={uiSchema} formData={data} onChange={setData} extraErrors={{ field2: ["서버 오류"] }} />
+ref.current?.validate() // 화면 검사. 통과하면 true
 ```
 
-### 섹션 타입
-
-| 타입 | 설명 |
-|------|------|
-| `fields` | 표준 폼 필드 (기본값) |
-| `image` | 이미지 표시 (URL 또는 업로드) |
-| `description` | 텍스트 설명 섹션 |
-
-### 필드 타입
-
-| 타입 | 설명 |
-|------|------|
-| `text` | 텍스트 입력 (포맷: 이메일, URL, 날짜, 핸드폰, 비밀번호) |
-| `number` | 숫자 입력 (정수/소수, range/updown 위젯) |
-| `select` | 단일 선택 (드롭다운 또는 라디오) |
-| `multiselect` | 다중 선택 (체크박스) |
-| `checkbox` | 불린 체크박스 |
-| `file` | 파일 업로드 (미리보기 지원) |
-
-## 커스터마이즈
-
-### 섹션 스타일링
-
-```typescript
-// 배경색 설정
-section.ui.backgroundColor = "#e3f2fd"
-
-// 헤더 이미지 설정
-section.ui.headerImage = "https://example.com/header.jpg"
-
-// 그리드 레이아웃 (1-4열)
-section.ui.grid = 2
-
-// 최대 높이 (스크롤)
-section.ui.maxHeight = 400
-```
-
-### Hook 사용하기
+`FormView` 를 쓰지 않고 RJSF Form 을 직접 쓸 때는 이것을 넘깁니다:
 
 ```tsx
-import { useFormBuilder } from '@kokotu0/rjsf-form-builder'
-
-function CustomBuilder() {
-  const builder = useFormBuilder()
-
-  // 섹션 추가
-  builder.addSection({ title: '새 섹션' })
-
-  // 필드 추가
-  builder.addField(sectionId)
-
-  // 스키마 가져오기
-  const { jsonSchema, uiSchema } = builder.toSchemas()
-
-  return <div>...</div>
-}
+const { schema, rules } = renderSchema(jsonSchema)
+<Form
+  schema={schema}
+  uiSchema={uiSchema}
+  templates={customTemplates}
+  widgets={customWidgets}
+  customValidate={rulesValidate(rules)}
+  transformErrors={transformErrors}
+  experimental_defaultFormStateBehavior={FORM_STATE_BEHAVIOR}
+  validator={validator}
+/>
 ```
 
-## 타입
+- `FORM_STATE_BEHAVIOR` 는 선택에 첫 선택지를 미리 넣지 않게 합니다. 넣으면 필수 검사가 걸리지 않습니다.
+- `transformErrors` 는 오류를 한국어로 바꾸고 항목마다 하나만 남깁니다. `koreanErrors({ required: () => "..." })` 로 문구를 바꿉니다.
 
-```typescript
-import type {
-  FormDefinition,
-  SectionDefinition,
-  FieldDefinition,
-  FormSchemas,
-  FormBuilderProps,
-} from '@kokotu0/rjsf-form-builder'
+## React 없이
+
+```ts
+import { compileDefinition, checkDefinition } from "@kokotu0/rjsf-form-builder/compile"
 ```
 
-## 향후 개선 예정
+`/compile` 은 React 를 가져오지 않습니다. 서버 쪽 시험이나 node 에서 씁니다.
 
-- [ ] **컴포넌트 로직/UI 분리** - 현재 컴포넌트 내부에 로직과 UI가 혼합되어 있음. 추후 분리하여 커스터마이즈 용이하게 개선 예정
-- [ ] **테마 커스터마이즈** - MUI 테마 외 다른 UI 라이브러리 지원
-- [ ] **영상 섹션** - 비디오 임베드 지원
-- [ ] **조건부 필드** - 특정 조건에 따른 필드 표시/숨김
-- [ ] **필드 유효성 검사 UI** - 더 다양한 validation 룰 설정
+## 0.1 에서 바뀐 것 (0.2.0)
+
+- data 를 섹션마다 중첩하지 않고 평평하게 둡니다. 0.1 정의와 스키마는 그대로 읽지 못합니다
+- `FieldDefinition.kind`, `FormDefinition.nextKey`, `FormDefinition.rules`, `FieldDefinition.extra` 를 더했습니다
+- `FieldSchema` 는 `title` `description` `maxLength` `minimum` `maximum` `options` 만 둡니다. `enum` · `enumNames` 는 `options` 로 바뀌었습니다
+- 항목 키를 nanoid 대신 `field<번호>` 로 매깁니다
+- 루트 `required` 를 항목의 필수에서 만듭니다(0.1 은 늘 빈 목록이었습니다)
+- 전화번호 위젯이 `010-0000-0000` 꼴로 바꾸지 않습니다
+- 파일 항목, 날짜+시간, URL, 비밀번호 형식, 슬라이더 · 증감 숫자 위젯, 섹션 배경색 · 머리 이미지를 뺐습니다
+- `FormBuilder` 의 `onChange` 가 `(definition, schemas)` 를 받습니다
+- `FormView`, `RulesEditor`, `checkDefinition`, `renderSchema`, `rulesValidate`, `transformErrors` 를 더했습니다
+- 화면 문구에서 그림 문자를 뺐습니다
+- peer: MUI 6 · 7, RJSF 6
+
+## 시험
+
+```bash
+npm run build && npm test
+```
 
 ## 라이선스
 

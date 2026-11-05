@@ -1,249 +1,218 @@
-import type { RJSFSchema } from "@rjsf/utils"
+import type { ReactNode } from "react"
 
 /**
- * FormBuilder 타입 정의
- * 
- * 구조:
+ * FormBuilder 타입 (0.2.0)
+ *
  * FormDefinition
- *   └── SectionDefinition[] (1:N)
- *         └── FieldDefinition[] (1:N)
- * 
- * Section 하위에 Section 없음 (중첩 X)
- * jsonSchema + uiSchema를 동시에 정의
+ *   └── SectionDefinition[]   배치만 맡는다. 값(formData)은 섹션과 상관없이 평평하다
+ *         └── FieldDefinition[]
+ *
+ * 0.1 과 다른 점
+ * - data 가 평평하다. 섹션은 루트 uiSchema 의 `ui:options.sections` 로만 적는다
+ * - 항목마다 `kind` 가 있다. JSON Schema · UI Schema 는 kind 에서 만든다
+ * - 항목 키는 `field1`, `field2` … 이다. `FormDefinition.nextKey` 가 다음 번호이고 지운 번호는 다시 쓰지 않는다
+ * - 선택지는 `{ value, label }` 이다. 값은 처음 이름으로 정하고 이름을 바꿔도 그대로다
+ * - `extra` 의 `x-` 설정을 항목 스키마에 그대로 싣는다
+ * - 양식 규칙 `oneOfRequired` (여럿 중 하나는 필수)
  */
 
-// ============ Field 관련 ============
+// ============ 항목 ============
 
-/** 필드 스키마 타입 */
-export type FieldSchemaType = 
-  | "string" 
-  | "number" 
-  | "integer" 
-  | "boolean" 
-  | "array"
-
-/** 필드 포맷 (string 타입용) */
-export type FieldFormat = 
-  | "date" 
-  | "date-time" 
-  | "email" 
-  | "uri" 
-  | "password"
-  | "data-url"
-
-/** 필드 위젯 타입 */
-export type FieldWidget = 
+export type FieldKind =
   | "text"
   | "textarea"
-  | "select"
-  | "radio"
-  | "checkboxes"
-  | "checkbox"
+  | "phone"
+  | "email"
+  | "number"
+  | "integer"
   | "date"
-  | "datetime"
-  | "password"
-  | "hidden"
-  | "phone"    // 커스텀: 핸드폰 번호
-  | "updown"   // 커스텀: 증감 버튼
-  | "range"    // 슬라이더
+  | "select"
+  | "multiselect"
+  | "checkbox"
 
-/** 필드의 JSON Schema 부분 */
+export interface FieldOption {
+  /** 저장되는 값. 처음 이름으로 정하고 바꾸지 않는다 */
+  value: string
+  /** 화면에 보이는 이름 */
+  label: string
+}
+
 export interface FieldSchema {
-  type: FieldSchemaType
   title: string
   description?: string
-  default?: unknown
-  // string
-  minLength?: number
+  /** text · textarea. 없으면 200 · 5000, 최대 2000 · 20000 */
   maxLength?: number
-  pattern?: string
-  format?: FieldFormat
-  // number/integer
+  /** number · integer */
   minimum?: number
   maximum?: number
-  // enum (select, radio, checkboxes)
-  enum?: (string | number)[]
-  enumNames?: string[]  // 표시용 이름 (oneOf로 변환됨)
-  // array
-  items?: {
-    type: FieldSchemaType
-    enum?: (string | number)[]
-    enumNames?: string[]
-  }
-  uniqueItems?: boolean
+  /** select · multiselect */
+  options?: FieldOption[]
 }
 
-/** 필드의 UI Schema 부분 */
 export interface FieldUiSchema {
-  widget?: FieldWidget
+  /** select 는 "select" | "radio". multiselect 는 늘 checkboxes */
+  widget?: "select" | "radio" | "checkboxes"
   placeholder?: string
-  disabled?: boolean
-  readonly?: boolean
-  autofocus?: boolean
-  options?: Record<string, unknown>
-  classNames?: string
 }
 
-/** 필드 정의 (Schema + UI 통합) */
+/** `x-` 로 시작하는 키만 스키마에 실린다 */
+export type FieldExtra = { [key: `x-${string}`]: unknown }
+
 export interface FieldDefinition {
   id: string
-  name: string  // 필드명 (영문, JSON key)
+  /** 값의 키. 기본은 `field<번호>` */
+  name: string
+  kind: FieldKind
   required: boolean
   schema: FieldSchema
   ui: FieldUiSchema
+  extra?: FieldExtra
 }
 
-// ============ Section 관련 ============
+// ============ 섹션 ============
 
-/** 섹션 타입 */
-export type SectionType = 
-  | "fields"      // 필드 목록 (기본)
-  | "image"       // 이미지
-  | "description" // 설명 텍스트
-  | "file"        // 파일 다운로드
+export type SectionType = "fields" | "image" | "description"
 
-/** 이미지 컨텐츠 */
 export interface ImageContent {
-  url?: string           // URL 입력
-  file?: string          // Base64 데이터 (로컬 업로드)
-  alt?: string           // 대체 텍스트
+  url?: string
+  file?: string
+  alt?: string
   width?: number | string
   height?: number | string
 }
 
-/** 설명 컨텐츠 */
-export interface DescriptionContent {
-  text: string           // 마크다운 또는 HTML
-  format?: "text" | "markdown" | "html"
-}
-
-/** 파일 컨텐츠 */
-export interface FileContent {
-  url?: string
-  file?: string          // Base64 데이터
-  fileName?: string
-  fileSize?: number
-}
-
-/** 섹션 컨텐츠 (타입별) */
-export type SectionContent = ImageContent | DescriptionContent | FileContent
-
-/** 섹션 UI 옵션 */
-export interface SectionUiSchema {
-  /** 그리드 열 수 (1 = 세로, 2 = 2열, 3 = 3열...) */
-  grid?: number
-  /** 접기 가능 여부 */
-  collapsible?: boolean
-  /** 기본 접힘 상태 */
-  collapsed?: boolean
-  classNames?: string
-  /** 배경색 */
-  backgroundColor?: string
-  /** 헤더 이미지 URL */
-  headerImage?: string
-  /** 패딩 */
-  padding?: number
-  /** 섹션 최대 높이 (스크롤) */
-  maxHeight?: number | string
-}
-
-/** 섹션 정의 */
 export interface SectionDefinition {
   id: string
-  name: string  // 섹션명 (영문, JSON key)
+  name: string
   title: string
   description?: string
-  type: SectionType       // 섹션 타입
-  fields: FieldDefinition[] // type이 "fields"일 때만 사용
-  content?: SectionContent  // type이 "image", "description", "file"일 때 사용
-  ui: SectionUiSchema
+  type: SectionType
+  /** type 이 "fields" 일 때만 쓴다 */
+  fields: FieldDefinition[]
+  /** type 이 "image" 일 때 */
+  content?: ImageContent
+  ui: { grid?: number }
 }
 
-// ============ Form 전체 ============
+// ============ 규칙 · 양식 ============
 
-/** 폼 정의 (최상위) */
+/** keys 중 하나는 값이 있어야 한다 */
+export interface FormRule {
+  type: "oneOfRequired"
+  keys: string[]
+  message: string
+}
+
 export interface FormDefinition {
   id: string
+  /** 다음 항목 번호. 지운 번호는 다시 쓰지 않는다 */
+  nextKey: number
   sections: SectionDefinition[]
+  rules?: FormRule[]
 }
 
 // ============ 변환 결과 ============
 
-/** JSON Schema (rjsf 호환) */
-export interface JsonSchema {
-  $id?: string
-  type: "object"
-  title?: string
+export type JsonObject = Record<string, unknown>
+
+/** 저장한 스키마의 `x-rules` 한 줄 */
+export interface StoredRule {
+  oneOfRequired: string[]
+  message: string
+}
+
+/** 루트 `ui:options.sections` 한 줄 */
+export interface LayoutSection {
+  type?: "image" | "description"
+  title: string
   description?: string
-  properties: Record<string, unknown>
-  required?: string[]
+  fields: string[]
+  grid: number
+  src?: string
+  alt?: string
 }
 
-/** UI Schema (rjsf 호환) */
-export interface UiSchema {
-  "ui:order"?: string[]
-  [key: string]: unknown
-}
-
-/** 최종 변환 결과 */
 export interface FormSchemas {
-  jsonSchema: RJSFSchema
-  uiSchema: UiSchema
+  jsonSchema: JsonObject
+  uiSchema: JsonObject
 }
 
-// ============ Hook 반환 타입 ============
+// ============ 훅 ============
+
+export interface UseFormBuilderOptions {
+  /** 키 만들기. 기본은 `field<번호>` */
+  keyOf?: (n: number) => string
+  /** 종류를 바꾸지 못하게 할 키와 그 종류. 기본은 처음 정의에 든 항목 */
+  locked?: ReadonlyMap<string, FieldKind>
+  /** 정의가 바뀔 때마다. 처음 값으로는 부르지 않는다 */
+  onChange?: (definition: FormDefinition, schemas: FormSchemas) => void
+}
 
 export interface UseFormBuilderReturn {
-  /** 현재 폼 정의 */
   form: FormDefinition
-  
-  // Section CRUD
+  schemas: FormSchemas
+  fields: FieldDefinition[]
+  locked: ReadonlyMap<string, FieldKind>
+
   addSection: (section?: Partial<SectionDefinition>) => SectionDefinition
   updateSection: (sectionId: string, updates: Partial<SectionDefinition>) => void
+  /** 항목은 옆 섹션으로 옮긴다. 섹션이 하나면 지우지 않는다 */
   removeSection: (sectionId: string) => void
   moveSection: (sectionId: string, direction: "up" | "down") => void
   reorderSection: (activeId: string, overId: string) => void
-  
-  // Field CRUD
+
+  /** 키는 그때의 nextKey 로 매긴다 */
   addField: (sectionId: string, field?: Partial<FieldDefinition>) => FieldDefinition
   updateField: (sectionId: string, fieldId: string, updates: Partial<FieldDefinition>) => void
+  /** 잠긴 키는 바꾸지 않는다 */
+  setKind: (fieldId: string, kind: FieldKind) => void
+  /** 지운 항목이 든 규칙도 함께 지운다 */
   removeField: (sectionId: string, fieldId: string) => void
+  /** 섹션 끝에서 넘어가면 옆 섹션으로 간다 */
   moveField: (sectionId: string, fieldId: string, direction: "up" | "down") => void
   reorderField: (sectionId: string, activeId: string, overId: string) => void
-  
-  // 변환
+
+  setRules: (rules: FormRule[]) => void
+
   toSchemas: () => FormSchemas
-  
-  // 유틸
   getSection: (sectionId: string) => SectionDefinition | undefined
   getField: (sectionId: string, fieldId: string) => FieldDefinition | undefined
   reset: () => void
   loadForm: (form: FormDefinition) => void
 }
 
-// ============ Component Props ============
+// ============ 컴포넌트 ============
 
-export interface FormBuilderProps {
-  /** JSON Schema 변경 콜백 */
-  onSchemaChange?: (schema: RJSFSchema) => void
-  /** UI Schema 변경 콜백 */
-  onUiSchemaChange?: (uiSchema: UiSchema) => void
-  /** 전체 스키마 변경 콜백 (deprecated, onSchemaChange/onUiSchemaChange 사용 권장) */
-  onChange?: (schemas: FormSchemas) => void
-  /** 초기 폼 데이터 */
-  initialForm?: FormDefinition
-  /** 선택된 필드 ID (폼 미리보기에서 클릭 시) */
-  selectedFieldId?: string | null
-  /** 필드 선택 콜백 */
-  onFieldSelect?: (fieldId: string | null) => void
+export interface FormBuilderIcons {
+  add?: ReactNode
+  remove?: ReactNode
+  up?: ReactNode
+  down?: ReactNode
+  drag?: ReactNode
+  expand?: ReactNode
+  collapse?: ReactNode
 }
 
-/** 필드 타입 옵션 (UI 선택용) */
-export interface FieldTypeOption {
-  value: string
-  label: string
-  schemaType: FieldSchemaType
-  format?: FieldFormat
-  widget?: FieldWidget
-  isArray?: boolean
+export interface FormBuilderProps {
+  /** 바깥에서 만든 훅. 없으면 initialForm 으로 안에서 만든다 */
+  builder?: UseFormBuilderReturn
+  initialForm?: FormDefinition
+  keyOf?: (n: number) => string
+  locked?: ReadonlyMap<string, FieldKind>
+  onChange?: (definition: FormDefinition, schemas: FormSchemas) => void
+  onSchemaChange?: (schema: JsonObject) => void
+  onUiSchemaChange?: (uiSchema: JsonObject) => void
+  /** 고를 수 있는 종류. 기본은 모두 */
+  kinds?: FieldKind[]
+  /** 고를 수 있는 섹션 종류. 하나면 고르기 상자를 숨긴다 */
+  sectionTypes?: SectionType[]
+  /** 규칙 편집을 보일지. 기본 true */
+  showRules?: boolean
+  /** 항목 편집 아래에 붙일 것. 예: 요약 설정 */
+  renderFieldExtra?: (field: FieldDefinition, update: (updates: Partial<FieldDefinition>) => void) => ReactNode
+  /** 키를 보일지. 기본 true */
+  showKeys?: boolean
+  icons?: FormBuilderIcons
+  selectedFieldId?: string | null
+  onFieldSelect?: (fieldId: string | null) => void
 }

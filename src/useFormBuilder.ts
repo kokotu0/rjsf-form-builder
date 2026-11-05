@@ -1,455 +1,242 @@
-import { useState, useCallback } from "react"
-import { nanoid } from "nanoid"
-import type {
-  FormDefinition,
-  SectionDefinition,
-  FieldDefinition,
-  FormSchemas,
-  UseFormBuilderReturn,
-} from "./types"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 
-// ============ 기본값 생성 ============
+import { compileDefinition, defaultKey, emptyDefinition, fieldsOf, hasOptions, kindsOf, tidyRules, uid } from "./compile"
+import type { FieldDefinition, FieldKind, FormDefinition, FormRule, SectionDefinition, UseFormBuilderOptions, UseFormBuilderReturn } from "./types"
 
-const createDefaultSection = (partial?: Partial<SectionDefinition>): SectionDefinition => ({
-  id: nanoid(),
-  name: nanoid(),  // uuid로 자동 생성
-  title: "새 섹션",
-  description: "",
-  type: "fields",  // 기본값: 필드 목록
-  fields: [],
-  ui: { grid: 1 },
-  ...partial,
-})
-
-const createDefaultField = (partial?: Partial<FieldDefinition>): FieldDefinition => ({
-  id: nanoid(),
-  name: nanoid(),  // uuid로 자동 생성
-  required: false,
-  schema: {
-    type: "string",
-    title: "새 필드",
-  },
-  ui: {},
-  ...partial,
-})
-
-const createDefaultForm = (): FormDefinition => ({
-  id: nanoid(),
-  sections: [],
-})
-
-// ============ 변환 헬퍼 ============
-
-function buildFieldSchema(field: FieldDefinition): Record<string, unknown> {
-  const schema: Record<string, unknown> = {
-    type: field.schema.type,
-    title: field.schema.title,
-  }
-
-  if (field.schema.description) {
-    schema.description = field.schema.description
-  }
-
-  if (field.schema.default !== undefined) {
-    schema.default = field.schema.default
-  }
-
-  // string 관련
-  if (field.schema.type === "string") {
-    if (field.schema.minLength) schema.minLength = field.schema.minLength
-    if (field.schema.maxLength) schema.maxLength = field.schema.maxLength
-    if (field.schema.pattern) schema.pattern = field.schema.pattern
-    if (field.schema.format) schema.format = field.schema.format
-  }
-
-  // number/integer 관련
-  if (field.schema.type === "number" || field.schema.type === "integer") {
-    if (field.schema.minimum !== undefined) schema.minimum = field.schema.minimum
-    if (field.schema.maximum !== undefined) schema.maximum = field.schema.maximum
-  }
-
-  // enum (select, radio)
-  if (field.schema.enum && field.schema.enum.length > 0) {
-    if (field.schema.enumNames && field.schema.enumNames.length === field.schema.enum.length) {
-      // oneOf 형태로 변환 (표시 이름 포함)
-      schema.oneOf = field.schema.enum.map((value, i) => ({
-        const: value,
-        title: field.schema.enumNames![i],
-      }))
-    } else {
-      schema.enum = field.schema.enum
-    }
-  }
-
-  // array (checkboxes, multi-select)
-  if (field.schema.type === "array") {
-    const items = field.schema.items || { type: "string" }
-    // items.enum이 있고 비어있지 않을 때만 설정
-    if (items.enum && items.enum.length > 0) {
-      schema.items = { type: items.type || "string", enum: items.enum }
-    } else {
-      schema.items = { type: items.type || "string" }
-    }
-    if (field.schema.uniqueItems) {
-      schema.uniqueItems = true
-    }
-  }
-
-  return schema
+function move<T>(list: T[], from: number, to: number): T[] {
+  if (from < 0 || to < 0 || to >= list.length || from === to) return list
+  const next = [...list]
+  const [item] = next.splice(from, 1)
+  next.splice(to, 0, item)
+  return next
 }
 
-function buildFieldUiSchema(field: FieldDefinition): Record<string, unknown> {
-  const ui: Record<string, unknown> = {}
+const firstOption = () => [{ value: "선택 1", label: "선택 1" }]
 
-  if (field.ui.widget) {
-    ui["ui:widget"] = field.ui.widget
+/** 종류를 바꿀 때 남길 것만 남긴다. 제목 · 설명 · 필수 · extra 는 그대로 */
+function withKind(field: FieldDefinition, kind: FieldKind): FieldDefinition {
+  const { title, description, options } = field.schema
+  return {
+    ...field,
+    kind,
+    schema: { title, description, ...(hasOptions(kind) ? { options: options?.length ? options : firstOption() } : {}) },
+    ui: { placeholder: field.ui.placeholder },
   }
-
-  if (field.ui.placeholder) {
-    ui["ui:placeholder"] = field.ui.placeholder
-  }
-
-  if (field.ui.disabled) {
-    ui["ui:disabled"] = true
-  }
-
-  if (field.ui.readonly) {
-    ui["ui:readonly"] = true
-  }
-
-  if (field.ui.autofocus) {
-    ui["ui:autofocus"] = true
-  }
-
-  if (field.ui.options && Object.keys(field.ui.options).length > 0) {
-    ui["ui:options"] = field.ui.options
-  }
-
-  if (field.ui.classNames) {
-    ui["classNames"] = field.ui.classNames
-  }
-
-  return ui
 }
 
-// ============ Hook ============
+const mapFields = (form: FormDefinition, change: (f: FieldDefinition) => FieldDefinition): FormDefinition => ({
+  ...form,
+  sections: form.sections.map((s) => ({ ...s, fields: s.fields.map(change) })),
+})
 
-export const useFormBuilder = (initialForm?: FormDefinition): UseFormBuilderReturn => {
-  const [form, setForm] = useState<FormDefinition>(initialForm ?? createDefaultForm())
+/**
+ * 정의를 들고 고치는 훅. 그리는 것은 `FormBuilder` 가 하고, 직접 그려도 된다.
+ *
+ * - 항목 키는 `keyOf(nextKey)` 로 매기고 nextKey 를 올린다. 지운 번호는 다시 쓰지 않는다
+ * - `locked` 의 키는 종류를 바꾸지 못한다. 기본은 처음 정의에 든 항목이다
+ * - 정의가 바뀌면 `onChange(definition, schemas)` 를 부른다
+ */
+export const useFormBuilder = (initialForm?: FormDefinition, options: UseFormBuilderOptions = {}): UseFormBuilderReturn => {
+  const [form, setForm] = useState<FormDefinition>(() => initialForm ?? emptyDefinition())
+  const [initialLocked] = useState(() => (initialForm ? kindsOf(initialForm) : new Map<string, FieldKind>()))
+  const locked = options.locked ?? initialLocked
+  const keyOf = options.keyOf ?? defaultKey
 
-  // ============ Section CRUD ============
+  const latest = useRef(options)
+  useEffect(() => {
+    latest.current = options
+  })
+  const first = useRef(form)
+  const schemas = useMemo(() => compileDefinition(form), [form])
+  useEffect(() => {
+    if (form !== first.current) latest.current.onChange?.(form, schemas)
+  }, [form, schemas])
+
+  // ============ 섹션 ============
 
   const addSection = useCallback((partial?: Partial<SectionDefinition>) => {
-    const newSection = createDefaultSection(partial)
-    setForm((prev) => ({
-      ...prev,
-      sections: [...prev.sections, newSection],
-    }))
-    return newSection
+    const id = partial?.id ?? uid()
+    const section: SectionDefinition = { id, title: "새 섹션", type: "fields", fields: [], ui: { grid: 1 }, ...partial, name: partial?.name || `section_${id}` }
+    setForm((prev) => ({ ...prev, sections: [...prev.sections, section] }))
+    return section
   }, [])
 
   const updateSection = useCallback((sectionId: string, updates: Partial<SectionDefinition>) => {
-    setForm((prev) => ({
-      ...prev,
-      sections: prev.sections.map((section) => {
-        if (section.id !== sectionId) return section
-        
-        // 타입 변경 시 처리
-        if (updates.type && updates.type !== section.type) {
-          // fields → image/description: 필드 초기화
-          if (updates.type !== "fields") {
-            return { ...section, ...updates, fields: [] }
-          }
-          // image/description → fields: 컨텐츠 초기화
-          return { ...section, ...updates, content: undefined }
-        }
-        
-        return { ...section, ...updates }
-      }),
-    }))
+    setForm((prev) => {
+      const next = { ...prev, sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, ...updates } : s)) }
+      // 항목 섹션이 아닌 것으로 바꾸면 항목은 앞 섹션으로 보낸다
+      const index = next.sections.findIndex((s) => s.id === sectionId)
+      const section = next.sections[index]
+      if (!section || section.type === "fields" || section.fields.length === 0) return next
+      const target = next.sections.findIndex((s, i) => i !== index && s.type === "fields")
+      if (target < 0) return prev
+      return {
+        ...next,
+        sections: next.sections.map((s, i) => (i === target ? { ...s, fields: [...s.fields, ...section.fields] } : i === index ? { ...s, fields: [] } : s)),
+      }
+    })
   }, [])
 
   const removeSection = useCallback((sectionId: string) => {
-    setForm((prev) => ({
-      ...prev,
-      sections: prev.sections.filter((section) => section.id !== sectionId),
-    }))
+    setForm((prev) => {
+      if (prev.sections.length <= 1) return prev
+      const index = prev.sections.findIndex((s) => s.id === sectionId)
+      if (index < 0) return prev
+      const moving = prev.sections[index].fields
+      if (moving.length > 0) {
+        const before = prev.sections.slice(0, index).map((s, i) => [s, i] as const).filter(([s]) => s.type === "fields").pop()
+        const after = prev.sections.map((s, i) => [s, i] as const).find(([s, i]) => i > index && s.type === "fields")
+        const target = (before ?? after)?.[1]
+        if (target === undefined) return prev
+        const sections = prev.sections.map((s, i) => (i === target ? { ...s, fields: i < index ? [...s.fields, ...moving] : [...moving, ...s.fields] } : s))
+        return { ...prev, sections: sections.filter((s) => s.id !== sectionId) }
+      }
+      return { ...prev, sections: prev.sections.filter((s) => s.id !== sectionId) }
+    })
   }, [])
 
   const moveSection = useCallback((sectionId: string, direction: "up" | "down") => {
     setForm((prev) => {
       const index = prev.sections.findIndex((s) => s.id === sectionId)
-      if (index === -1) return prev
-
-      const newIndex = direction === "up" ? index - 1 : index + 1
-      if (newIndex < 0 || newIndex >= prev.sections.length) return prev
-
-      const newSections = [...prev.sections]
-      const temp = newSections[index]
-      newSections[index] = newSections[newIndex]
-      newSections[newIndex] = temp
-
-      return { ...prev, sections: newSections }
+      return { ...prev, sections: move(prev.sections, index, index + (direction === "up" ? -1 : 1)) }
     })
   }, [])
 
-  // ============ Field CRUD ============
-
-  const addField = useCallback((sectionId: string, partial?: Partial<FieldDefinition>) => {
-    const newField = createDefaultField(partial)
+  const reorderSection = useCallback((activeId: string, overId: string) => {
     setForm((prev) => ({
       ...prev,
-      sections: prev.sections.map((section) =>
-        section.id === sectionId
-          ? { ...section, fields: [...section.fields, newField] }
-          : section
-      ),
+      sections: move(prev.sections, prev.sections.findIndex((s) => s.id === activeId), prev.sections.findIndex((s) => s.id === overId)),
     }))
-    return newField
   }, [])
 
-  const updateField = useCallback(
-    (sectionId: string, fieldId: string, updates: Partial<FieldDefinition>) => {
+  // ============ 항목 ============
+
+  // 같은 틱에 여럿을 더해도 번호가 겹치지 않게 다음 번호를 따로 센다
+  const nextKey = useRef(form.nextKey)
+  useEffect(() => {
+    nextKey.current = Math.max(nextKey.current, form.nextKey)
+  }, [form.nextKey])
+
+  const addField = useCallback(
+    (sectionId: string, partial?: Partial<FieldDefinition>) => {
+      const kind = partial?.kind ?? "text"
+      let name = partial?.name
+      if (!name) {
+        name = keyOf(nextKey.current)
+        nextKey.current += 1
+      }
+      const made: FieldDefinition = {
+        id: uid(),
+        kind,
+        required: false,
+        schema: { title: "새 항목", ...(hasOptions(kind) ? { options: firstOption() } : {}) },
+        ui: {},
+        ...partial,
+        name,
+      }
+      const after = nextKey.current
       setForm((prev) => ({
         ...prev,
-        sections: prev.sections.map((section) =>
-          section.id === sectionId
-            ? {
-                ...section,
-                fields: section.fields.map((field) =>
-                  field.id === fieldId ? { ...field, ...updates } : field
-                ),
-              }
-            : section
-        ),
+        nextKey: Math.max(prev.nextKey, after),
+        sections: prev.sections.map((s) => (s.id === sectionId ? { ...s, fields: [...s.fields, made] } : s)),
       }))
+      return made
     },
-    []
+    [keyOf],
   )
 
-  const removeField = useCallback((sectionId: string, fieldId: string) => {
-    setForm((prev) => ({
-      ...prev,
-      sections: prev.sections.map((section) =>
-        section.id === sectionId
-          ? { ...section, fields: section.fields.filter((f) => f.id !== fieldId) }
-          : section
-      ),
-    }))
-  }, [])
+  const updateField = useCallback(
+    (_sectionId: string, fieldId: string, updates: Partial<FieldDefinition>) => {
+      setForm((prev) =>
+        mapFields(prev, (f) => {
+          if (f.id !== fieldId) return f
+          const next = { ...f, ...updates }
+          // 잠긴 키는 이름과 종류를 그대로 둔다
+          if (locked.has(f.name)) return { ...next, name: f.name, kind: f.kind }
+          return next
+        }),
+      )
+    },
+    [locked],
+  )
 
-  const moveField = useCallback((sectionId: string, fieldId: string, direction: "up" | "down") => {
-    setForm((prev) => ({
-      ...prev,
-      sections: prev.sections.map((section) => {
-        if (section.id !== sectionId) return section
+  const setKind = useCallback(
+    (fieldId: string, kind: FieldKind) => {
+      setForm((prev) => mapFields(prev, (f) => (f.id !== fieldId || locked.has(f.name) || f.kind === kind ? f : withKind(f, kind))))
+    },
+    [locked],
+  )
 
-        const index = section.fields.findIndex((f) => f.id === fieldId)
-        if (index === -1) return section
-
-        const newIndex = direction === "up" ? index - 1 : index + 1
-        if (newIndex < 0 || newIndex >= section.fields.length) return section
-
-        const newFields = [...section.fields]
-        const temp = newFields[index]
-        newFields[index] = newFields[newIndex]
-        newFields[newIndex] = temp
-
-        return { ...section, fields: newFields }
-      }),
-    }))
-  }, [])
-
-  // ============ Drag & Drop Reorder ============
-
-  const reorderSection = useCallback((activeId: string, overId: string) => {
+  const removeField = useCallback((_sectionId: string, fieldId: string) => {
     setForm((prev) => {
-      const oldIndex = prev.sections.findIndex((s) => s.id === activeId)
-      const newIndex = prev.sections.findIndex((s) => s.id === overId)
-      if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return prev
+      const next = { ...prev, sections: prev.sections.map((s) => ({ ...s, fields: s.fields.filter((f) => f.id !== fieldId) })) }
+      return { ...next, rules: tidyRules(next) }
+    })
+  }, [])
 
-      const newSections = [...prev.sections]
-      const [removed] = newSections.splice(oldIndex, 1)
-      newSections.splice(newIndex, 0, removed)
-
-      return { ...prev, sections: newSections }
+  const moveField = useCallback((_sectionId: string, fieldId: string, direction: "up" | "down") => {
+    setForm((prev) => {
+      const step = direction === "up" ? -1 : 1
+      const at = prev.sections.findIndex((s) => s.fields.some((f) => f.id === fieldId))
+      if (at < 0) return prev
+      const fields = prev.sections[at].fields
+      const index = fields.findIndex((f) => f.id === fieldId)
+      if (index + step >= 0 && index + step < fields.length) {
+        return { ...prev, sections: prev.sections.map((s, i) => (i === at ? { ...s, fields: move(fields, index, index + step) } : s)) }
+      }
+      let neighbour = at + step
+      while (neighbour >= 0 && neighbour < prev.sections.length && prev.sections[neighbour].type !== "fields") neighbour += step
+      if (neighbour < 0 || neighbour >= prev.sections.length) return prev
+      const field = fields[index]
+      return {
+        ...prev,
+        sections: prev.sections.map((s, i) => {
+          if (i === at) return { ...s, fields: s.fields.filter((f) => f.id !== fieldId) }
+          if (i === neighbour) return { ...s, fields: step > 0 ? [field, ...s.fields] : [...s.fields, field] }
+          return s
+        }),
+      }
     })
   }, [])
 
   const reorderField = useCallback((sectionId: string, activeId: string, overId: string) => {
     setForm((prev) => ({
       ...prev,
-      sections: prev.sections.map((section) => {
-        if (section.id !== sectionId) return section
-
-        const oldIndex = section.fields.findIndex((f) => f.id === activeId)
-        const newIndex = section.fields.findIndex((f) => f.id === overId)
-        if (oldIndex === -1 || newIndex === -1 || oldIndex === newIndex) return section
-
-        const newFields = [...section.fields]
-        const [removed] = newFields.splice(oldIndex, 1)
-        newFields.splice(newIndex, 0, removed)
-
-        return { ...section, fields: newFields }
-      }),
+      sections: prev.sections.map((s) =>
+        s.id === sectionId ? { ...s, fields: move(s.fields, s.fields.findIndex((f) => f.id === activeId), s.fields.findIndex((f) => f.id === overId)) } : s,
+      ),
     }))
   }, [])
 
-  // ============ 유틸 ============
+  const setRules = useCallback((rules: FormRule[]) => setForm((prev) => ({ ...prev, rules })), [])
 
-  const getSection = useCallback(
-    (sectionId: string) => form.sections.find((s) => s.id === sectionId),
-    [form.sections]
-  )
+  // ============ 그 밖 ============
 
-  const getField = useCallback(
-    (sectionId: string, fieldId: string) => {
-      const section = form.sections.find((s) => s.id === sectionId)
-      return section?.fields.find((f) => f.id === fieldId)
-    },
-    [form.sections]
-  )
-
-  const reset = useCallback(() => {
-    setForm(createDefaultForm())
-  }, [])
-
-  const loadForm = useCallback((newForm: FormDefinition) => {
-    setForm(newForm)
-  }, [])
-
-  // ============ JSON Schema 변환 ============
-
-  const toSchemas = useCallback((): FormSchemas => {
-    const properties: Record<string, object> = {}
-    const uiSchema: FormSchemas["uiSchema"] = {
-      "ui:order": [] as string[],
-    }
-
-    for (const section of form.sections) {
-      const sectionOptions: Record<string, unknown> = {}
-      
-      // 공통 UI 옵션
-      if (section.ui.grid && section.ui.grid > 1) {
-        sectionOptions.grid = section.ui.grid
-      }
-      if (section.ui.backgroundColor) {
-        sectionOptions.backgroundColor = section.ui.backgroundColor
-      }
-
-      // 섹션 타입별 처리
-      if (section.type === "image") {
-        // 이미지 섹션 (이미지 유무와 관계없이 항상 sectionType 설정)
-        const imageContent = section.content as { url?: string; file?: string; alt?: string } | undefined
-        const imageSrc = imageContent?.url || imageContent?.file
-        
-        sectionOptions.sectionType = "image"
-        if (imageSrc) {
-          sectionOptions.imageSrc = imageSrc
-          sectionOptions.imageAlt = imageContent?.alt || ""
-        }
-
-        // 빈 object로 표시 (필드 없음)
-        properties[section.name] = {
-          type: "object",
-          properties: {},
-        }
-
-        uiSchema[section.name] = {
-          "ui:options": sectionOptions,
-        }
-      } else if (section.type === "description") {
-        // 설명 섹션 (설명 유무와 관계없이 항상 sectionType 설정)
-        sectionOptions.sectionType = "description"
-        sectionOptions.descriptionText = section.description || ""
-        sectionOptions.descriptionTitle = section.title || ""
-
-        // 빈 object로 표시 (필드 없음)
-        properties[section.name] = {
-          type: "object",
-          properties: {},
-        }
-
-        uiSchema[section.name] = {
-          "ui:options": sectionOptions,
-        }
-      } else {
-        // 필드 섹션 (기본)
-        const sectionProperties: Record<string, object> = {}
-        const sectionRequired: string[] = []
-        const sectionUiSchema: Record<string, unknown> = {}
-        const fieldOrder: string[] = []
-
-        for (const field of section.fields) {
-          // Field -> JSON Schema
-          const fieldSchema = buildFieldSchema(field)
-          sectionProperties[field.name] = fieldSchema
-
-          if (field.required) {
-            sectionRequired.push(field.name)
-          }
-
-          // Field -> UI Schema
-          const fieldUi = buildFieldUiSchema(field)
-          if (Object.keys(fieldUi).length > 0) {
-            sectionUiSchema[field.name] = fieldUi
-          }
-
-          fieldOrder.push(field.name)
-        }
-
-        // Section -> JSON Schema
-        properties[section.name] = {
-          type: "object",
-          title: section.title,
-          description: section.description,
-          properties: sectionProperties,
-          required: sectionRequired.length > 0 ? sectionRequired : undefined,
-        }
-
-        // 헤더 이미지 (필드 섹션만)
-        if (section.ui.headerImage) {
-          sectionOptions.headerImage = section.ui.headerImage
-        }
-
-        uiSchema[section.name] = {
-          ...sectionUiSchema,
-          "ui:order": fieldOrder,
-          ...(Object.keys(sectionOptions).length > 0 && {
-            "ui:options": sectionOptions,
-          }),
-        }
-      }
-
-      ;(uiSchema["ui:order"] as string[]).push(section.name)
-    }
-
-    const jsonSchema: FormSchemas["jsonSchema"] = {
-      type: "object",
-      properties,
-      required: [],
-    }
-
-    return { jsonSchema, uiSchema }
-  }, [form])
+  const toSchemas = useCallback(() => compileDefinition(form), [form])
+  const getSection = useCallback((sectionId: string) => form.sections.find((s) => s.id === sectionId), [form.sections])
+  const getField = useCallback((sectionId: string, fieldId: string) => form.sections.find((s) => s.id === sectionId)?.fields.find((f) => f.id === fieldId), [form.sections])
+  const reset = useCallback(() => setForm(emptyDefinition()), [])
+  const loadForm = useCallback((next: FormDefinition) => setForm(next), [])
+  const fields = useMemo(() => fieldsOf(form), [form])
 
   return {
     form,
-    // Section
+    schemas,
+    fields,
+    locked,
     addSection,
     updateSection,
     removeSection,
     moveSection,
     reorderSection,
-    // Field
     addField,
     updateField,
+    setKind,
     removeField,
     moveField,
     reorderField,
-    // 변환
+    setRules,
     toSchemas,
-    // 유틸
     getSection,
     getField,
     reset,
